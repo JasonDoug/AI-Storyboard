@@ -100,7 +100,7 @@ assert.strictEqual(openaiClient.client.apiKey, "test-key");
 // 6. Test getLLMClient for OpenRouter
 const openrouterClient = getLLMClient({ provider: "openrouter", apiKey: "test-or-key" });
 assert.strictEqual(openrouterClient.provider, "openrouter");
-assert.strictEqual(openrouterClient.defaultModel, "anthropic/claude-3.5-sonnet");
+assert.strictEqual(openrouterClient.defaultModel, "openrouter/free");
 assert.strictEqual(openrouterClient.client.baseURL, "https://openrouter.ai/api/v1");
 
 // 7. Test getLLMClient for Ollama

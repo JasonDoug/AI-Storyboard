@@ -1,6 +1,14 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
-import { AspectRatio, ImageProvider } from "@/lib/providers";
+import {
+  AspectRatio,
+  ImageProvider,
+  AI_STUDIO_DEFAULT_KEY,
+  AI_STUDIO_DEFAULT_MODEL,
+  AI_STUDIO_DEFAULT_URL,
+  AI_STUDIO_WORKER_FALLBACK,
+  mapToAIStudioStyle,
+} from "@/lib/providers";
 import path from "path";
 import fs from "fs";
 
@@ -43,15 +51,21 @@ export async function POST(req: Request) {
       provider = "openai",
       apiKey,
       model,
+      baseUrl,
       aspectRatio = "16:9",
       artStyleModifier,
+      selectedArtStyleId,
+      style,
     } = body as {
       prompt: string;
       provider?: ImageProvider;
       apiKey?: string;
       model?: string;
+      baseUrl?: string;
       aspectRatio?: AspectRatio;
       artStyleModifier?: string;
+      selectedArtStyleId?: string;
+      style?: string;
     };
 
     if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
@@ -162,7 +176,130 @@ export async function POST(req: Request) {
     }
 
     // ==========================================
-    // Provider 3: OpenAI (DALL-E 3)
+    // Provider 3: AI Studio (Local FastAPI / Cloudflare Worker)
+    // ==========================================
+    if (provider === "aistudio") {
+      const studioKey = apiKey || process.env.AI_STUDIO_API_KEY || AI_STUDIO_DEFAULT_KEY;
+      const rawBaseUrl = baseUrl || process.env.AI_STUDIO_BASE_URL || AI_STUDIO_DEFAULT_URL;
+      const cleanBaseUrl = rawBaseUrl.replace(/\/+$/, "");
+      const workerFallbackUrl = process.env.AI_STUDIO_WORKER_URL || AI_STUDIO_WORKER_FALLBACK;
+
+      // Select generous model (preventing quota-draining 2k-3k neuron models)
+      let targetModel = model || AI_STUDIO_DEFAULT_MODEL;
+      if (targetModel.includes("flux-2-dev") || targetModel.includes("flux-2-klein-9b")) {
+        console.warn(`[AI Studio] High-cost model ${targetModel} requested; falling back to generous default ${AI_STUDIO_DEFAULT_MODEL}`);
+        targetModel = AI_STUDIO_DEFAULT_MODEL;
+      }
+
+      // Resolve style preset if mapped or passed
+      const stylePreset = style || mapToAIStudioStyle(selectedArtStyleId);
+
+      let buffer: Buffer | null = null;
+      let mimeType = "image/jpeg";
+
+      // Case A: Direct Cloudflare Worker URL
+      if (cleanBaseUrl.includes("workers.dev")) {
+        const res = await fetch(cleanBaseUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${studioKey}`,
+          },
+          body: JSON.stringify({
+            task: "text-to-image",
+            prompt: finalPrompt,
+            model: targetModel,
+            style: stylePreset || undefined,
+          }),
+        });
+
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(`AI Studio Worker error (${res.status}): ${errText}`);
+        }
+
+        const arrayBuf = await res.arrayBuffer();
+        buffer = Buffer.from(arrayBuf);
+        mimeType = res.headers.get("content-type") || "image/jpeg";
+      } else {
+        // Case B: Local FastAPI Server (with fallback to worker if local server unreachable)
+        try {
+          const endpoint = cleanBaseUrl.endsWith("/api/generate") || cleanBaseUrl.endsWith("/generate")
+            ? cleanBaseUrl
+            : `${cleanBaseUrl}/api/generate`;
+
+          const res = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${studioKey}`,
+            },
+            body: JSON.stringify({
+              prompt: finalPrompt,
+              model: targetModel,
+              style: stylePreset || undefined,
+              format: "json",
+            }),
+          });
+
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.detail || errData.error || `FastAPI error ${res.status}`);
+          }
+
+          const contentType = res.headers.get("content-type") || "";
+          if (contentType.includes("application/json")) {
+            const data = await res.json();
+            if (!data.image_url) {
+              throw new Error("No image_url returned by AI Studio");
+            }
+            const b64 = data.image_url.replace(/^data:image\/\w+;base64,/, "");
+            buffer = Buffer.from(b64, "base64");
+          } else {
+            const arrayBuf = await res.arrayBuffer();
+            buffer = Buffer.from(arrayBuf);
+            mimeType = contentType || "image/jpeg";
+          }
+        } catch (localErr: any) {
+          console.warn("[AI Studio] Local server failed, trying Cloudflare Worker fallback:", localErr.message);
+          const fallbackRes = await fetch(workerFallbackUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${studioKey}`,
+            },
+            body: JSON.stringify({
+              task: "text-to-image",
+              prompt: finalPrompt,
+              model: targetModel,
+              style: stylePreset || undefined,
+            }),
+          });
+
+          if (!fallbackRes.ok) {
+            const errText = await fallbackRes.text();
+            throw new Error(`AI Studio request failed: ${localErr.message}. Fallback worker also failed (${fallbackRes.status}): ${errText}`);
+          }
+
+          const arrayBuf = await fallbackRes.arrayBuffer();
+          buffer = Buffer.from(arrayBuf);
+          mimeType = fallbackRes.headers.get("content-type") || "image/jpeg";
+        }
+      }
+
+      if (!buffer || buffer.length === 0) {
+        throw new Error("AI Studio returned empty image data");
+      }
+
+      const saved = await persistImage(buffer, mimeType);
+      return NextResponse.json({
+        imageUrl: saved.imageUrl,
+        dataUrl: saved.dataUrl,
+      });
+    }
+
+    // ==========================================
+    // Provider 4: OpenAI (DALL-E 3)
     // ==========================================
     const openai = new OpenAI({ apiKey: apiKey || process.env.OPENAI_API_KEY });
 

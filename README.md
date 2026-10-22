@@ -32,9 +32,10 @@ Interactive Storyboard View
 - **Narrative Extraction (LLM)**:
   - **OpenAI**: GPT-4o, GPT-4o-mini
   - **Google Gemini**: Gemini 2.0 Flash, Gemini 1.5 Pro (via OpenAI-compatible endpoint)
-  - **OpenRouter**: Claude 3.5 Sonnet, Llama 3.3 70B, etc.
+  - **OpenRouter**: Default smart auto-router to zero-cost models (`openrouter/free`), plus `openrouter/auto`, Llama 3.3 70B, Claude 5.5, DeepSeek, etc.
   - **Ollama**: Local models (Llama 3.2, Mistral, Qwen) via local endpoint (`http://localhost:11434`)
 - **Image Generation**:
+  - **AI Studio / Cloudflare Workers AI**: Local FastAPI server (`http://localhost:8000`) with Cloudflare Worker edge fallback (`https://free-image-generation-api.potter-jason7839.workers.dev`). Curated for generous free tier models (`@cf/bytedance/stable-diffusion-xl-lightning`, SDXL Base 1.0, DreamShaper 8 LCM, FLUX.1 Schnell, etc.).
   - **OpenAI**: DALL-E 3 (`1792x1024`, `1024x1024`, `1024x1792`)
   - **Google Gemini**: Imagen 3 (`imagen-3.0-generate-002`) with native aspect ratios
   - **OpenRouter**: Image models (e.g. `bytedance-seed/seedream-4.5`)
@@ -99,6 +100,11 @@ OPENAI_API_KEY=sk-...
 GEMINI_API_KEY=AIza...
 OPENROUTER_API_KEY=sk-or-...
 OLLAMA_BASE_URL=http://localhost:11434
+
+# AI Studio / Cloudflare Workers AI Local Server & Worker Credentials
+AI_STUDIO_BASE_URL=http://localhost:8000
+AI_STUDIO_API_KEY=5b7f74f8ddb448f920eef0ae4263d81525d74
+AI_STUDIO_WORKER_URL=https://free-image-generation-api.potter-jason7839.workers.dev
 ```
 
 ### Development
@@ -109,6 +115,17 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ### Testing & Verification
 ```bash
+# Run the complete test suite (Unit, API, and E2E simulation)
 npm test
+
+# Run specific test suites
+npm run test:unit      # Tests parser, provider configs, and export engine
+npm run test:api       # Tests /api/analyze-beats and /api/generate-image routes
+npm run test:e2e       # Runs complete storyboard generation & file export simulation
+
+# Run live hardware diagnostic against local Ollama & environment
+npm run test:live
+
+# Run production build
 npm run build
 ```

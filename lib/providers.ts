@@ -1,9 +1,63 @@
 import OpenAI from "openai";
 
 export type LLMProvider = "openai" | "openrouter" | "ollama" | "gemini";
-export type ImageProvider = "openai" | "gemini" | "openrouter";
+export type ImageProvider = "openai" | "gemini" | "openrouter" | "aistudio";
 
 export type AspectRatio = "16:9" | "2.39:1" | "1:1" | "9:16" | "4:3";
+
+export const OPENROUTER_DEFAULT_MODEL = "openrouter/free";
+
+export interface OpenRouterModelOption {
+  id: string;
+  name: string;
+  badge?: string;
+  description: string;
+}
+
+export const OPENROUTER_MODELS: OpenRouterModelOption[] = [
+  {
+    id: "openrouter/free",
+    name: "Free Models Router (Auto)",
+    badge: "⚡ 100% Free",
+    description: "Smart auto-router across free models on OpenRouter with zero token cost",
+  },
+  {
+    id: "openrouter/auto",
+    name: "OpenRouter Auto Router",
+    badge: "🚀 Auto",
+    description: "Automatically analyzes prompt and routes to the best model",
+  },
+  {
+    id: "meta-llama/llama-3.3-70b-instruct",
+    name: "Llama 3.3 70B Instruct",
+    badge: "🔥 High Precision",
+    description: "Fast, high-precision structured output & narrative extraction",
+  },
+  {
+    id: "anthropic/claude-sonnet-5.5",
+    name: "Claude Sonnet 5.5",
+    badge: "👑 Quality",
+    description: "State-of-the-art cinematic direction and nuance",
+  },
+  {
+    id: "anthropic/claude-haiku-5.5",
+    name: "Claude Haiku 5.5",
+    badge: "⚡ Fast",
+    description: "Ultra-fast extraction with lower latency",
+  },
+  {
+    id: "deepseek/deepseek-v4.1-flash",
+    name: "DeepSeek V4.1 Flash",
+    badge: "💡 Efficient",
+    description: "Efficient reasoning and structured JSON output",
+  },
+  {
+    id: "google/gemma-4-31b-it:free",
+    name: "Google Gemma 4 31B (Free)",
+    badge: "⚡ Free",
+    description: "Free tier standalone model on OpenRouter",
+  },
+];
 
 export interface Beat {
   id: string;
@@ -123,7 +177,7 @@ export function getLLMClient(options: LLMClientOptions): LLMClientResult {
       });
       return {
         client,
-        defaultModel: model || "anthropic/claude-3.5-sonnet",
+        defaultModel: model || OPENROUTER_DEFAULT_MODEL,
         provider,
       };
     }
@@ -156,5 +210,91 @@ export function getLLMClient(options: LLMClientOptions): LLMClientResult {
         provider: "openai",
       };
     }
+  }
+}
+
+export interface AIStudioModel {
+  id: string;
+  name: string;
+  badge: string;
+  cost: string;
+  description: string;
+  isDefault?: boolean;
+}
+
+export const AI_STUDIO_DEFAULT_MODEL = "@cf/bytedance/stable-diffusion-xl-lightning";
+export const AI_STUDIO_DEFAULT_URL = "http://localhost:8000";
+export const AI_STUDIO_DEFAULT_KEY = "5b7f74f8ddb448f920eef0ae4263d81525d74";
+export const AI_STUDIO_WORKER_FALLBACK = "https://free-image-generation-api.potter-jason7839.workers.dev";
+
+/**
+ * Curated generous, high-quality models (protects free tier daily quota;
+ * intentionally omits expensive 2,000-3,000+ neuron models like Flux 2 Dev / Klein 9B).
+ */
+export const AI_STUDIO_IMAGE_MODELS: AIStudioModel[] = [
+  {
+    id: "@cf/bytedance/stable-diffusion-xl-lightning",
+    name: "SDXL Lightning (Fast & Generous)",
+    badge: "⚡ Low Cost (Recommended)",
+    cost: "~100 Neurons",
+    description: "Fast generation with minimal neuron usage. Best for daily free tier.",
+    isDefault: true,
+  },
+  {
+    id: "@cf/stabilityai/stable-diffusion-xl-base-1.0",
+    name: "SDXL Base 1.0",
+    badge: "⚡ Low Cost",
+    cost: "~150 Neurons",
+    description: "Standard high-resolution 1024x1024 model for detailed images.",
+  },
+  {
+    id: "@cf/lykon/dreamshaper-8-lcm",
+    name: "DreamShaper 8 LCM",
+    badge: "⚡ Low Cost",
+    cost: "~150 Neurons",
+    description: "Vibrant, artistic digital painting and stylized art.",
+  },
+  {
+    id: "@cf/black-forest-labs/flux-1-schnell",
+    name: "FLUX.1 Schnell",
+    badge: "🚀 Medium Cost",
+    cost: "~500 Neurons",
+    description: "State-of-the-art 12B parameter rapid text-to-image generator.",
+  },
+  {
+    id: "@cf/black-forest-labs/flux-2-klein-4b",
+    name: "FLUX.2 Klein 4B",
+    badge: "🚀 Medium Cost",
+    cost: "~500 Neurons",
+    description: "Distilled 4-step real-time generation model.",
+  },
+  {
+    id: "@cf/leonardo/phoenix-1.0",
+    name: "Leonardo Phoenix 1.0",
+    badge: "🚀 Medium Cost",
+    cost: "~500 Neurons",
+    description: "Superior prompt adherence and coherent text rendering.",
+  },
+];
+
+/**
+ * Maps an internal art style ID to an AI Studio style preset
+ * (pixel-art, anime, cyberpunk, cinematic, photorealistic, 3d-render, fantasy, origami, comic-book)
+ */
+export function mapToAIStudioStyle(styleId?: string): string | undefined {
+  if (!styleId) return undefined;
+  switch (styleId) {
+    case "cinematic-35mm":
+      return "cinematic";
+    case "anime-ghibli":
+      return "anime";
+    case "cyberpunk-concept":
+      return "cyberpunk";
+    case "pixar-3d":
+      return "3d-render";
+    case "graphic-novel":
+      return "comic-book";
+    default:
+      return undefined;
   }
 }

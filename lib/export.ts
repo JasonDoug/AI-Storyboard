@@ -7,6 +7,9 @@ function sanitizeFilename(name: string): string {
 }
 
 function triggerDownload(blob: Blob, filename: string) {
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return;
+  }
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -115,12 +118,30 @@ async function getImageBytes(url: string): Promise<{ data: Uint8Array; format: s
       const mimeMatch = parts[0].match(/:(.*?);/);
       const mime = mimeMatch ? mimeMatch[1] : "image/png";
       const format = mime.includes("jpeg") || mime.includes("jpg") ? "JPEG" : "PNG";
-      const binaryStr = atob(parts[1]);
+      const binaryStr = typeof atob !== "undefined"
+        ? atob(parts[1])
+        : Buffer.from(parts[1], "base64").toString("binary");
       const bytes = new Uint8Array(binaryStr.length);
       for (let i = 0; i < binaryStr.length; i++) {
         bytes[i] = binaryStr.charCodeAt(i);
       }
       return { data: bytes, format };
+    }
+
+    // If local relative generated file in server/test environment
+    if (typeof window === "undefined" && url.startsWith("/")) {
+      try {
+        const fs = await import("fs");
+        const path = await import("path");
+        const localPath = path.join(process.cwd(), "public", url);
+        if (fs.existsSync(localPath)) {
+          const fileBuf = await fs.promises.readFile(localPath);
+          const format = url.endsWith(".jpg") || url.endsWith(".jpeg") ? "JPEG" : "PNG";
+          return { data: new Uint8Array(fileBuf), format };
+        }
+      } catch (fsErr) {
+        // fallback to fetch
+      }
     }
 
     const res = await fetch(url);
@@ -136,14 +157,14 @@ async function getImageBytes(url: string): Promise<{ data: Uint8Array; format: s
 }
 
 /**
- * Exports complete package (images + markdown + script + json) into a ZIP archive.
+ * Builds the JSZip archive object without triggering browser download.
  */
-export async function exportToZip(
+export async function buildZipArchive(
   story: string,
   characterBible: string,
   beats: Beat[],
   metadata: { artStyle: string; aspectRatio: string }
-) {
+): Promise<JSZip> {
   const zip = new JSZip();
 
   zip.file("story.txt", story);
@@ -173,19 +194,32 @@ export async function exportToZip(
     }
   }
 
-  const zipBlob = await zip.generateAsync({ type: "blob" });
-  triggerDownload(zipBlob, `storyboard-package-${Date.now()}.zip`);
+  return zip;
 }
 
 /**
- * Generates and downloads a clean, printable storyboard PDF sheet.
+ * Exports complete package (images + markdown + script + json) into a ZIP archive and triggers browser download.
  */
-export async function exportToPdf(
+export async function exportToZip(
   story: string,
   characterBible: string,
   beats: Beat[],
   metadata: { artStyle: string; aspectRatio: string }
 ) {
+  const zip = await buildZipArchive(story, characterBible, beats, metadata);
+  const zipBlob = await zip.generateAsync({ type: "blob" });
+  triggerDownload(zipBlob, `storyboard-package-${Date.now()}.zip`);
+}
+
+/**
+ * Generates the clean, printable storyboard PDF document object.
+ */
+export async function buildPdfDocument(
+  story: string,
+  characterBible: string,
+  beats: Beat[],
+  metadata: { artStyle: string; aspectRatio: string }
+): Promise<jsPDF> {
   // Use landscape orientation for traditional cinematic storyboard look
   const doc = new jsPDF({
     orientation: "landscape",
@@ -325,5 +359,20 @@ export async function exportToPdf(
     doc.text(promptLines, textX, currentY);
   }
 
-  doc.save(`storyboard-sheet-${Date.now()}.pdf`);
+  return doc;
+}
+
+/**
+ * Generates and downloads a clean, printable storyboard PDF sheet.
+ */
+export async function exportToPdf(
+  story: string,
+  characterBible: string,
+  beats: Beat[],
+  metadata: { artStyle: string; aspectRatio: string }
+) {
+  const doc = await buildPdfDocument(story, characterBible, beats, metadata);
+  if (typeof window !== "undefined") {
+    doc.save(`storyboard-sheet-${Date.now()}.pdf`);
+  }
 }

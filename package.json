@@ -7,25 +7,30 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "tsc test/run-tests.ts lib/parser.ts lib/providers.ts lib/export.ts --outDir dist-test --module commonjs --target es2020 --esModuleInterop --skipLibCheck --moduleResolution node && node dist-test/test/run-tests.js && rm -rf dist-test"
+    "test": "npx tsx test/run-all.ts",
+    "test:unit": "npx tsx test/unit-parser.ts && npx tsx test/unit-providers.ts && npx tsx test/unit-export.ts",
+    "test:api": "npx tsx test/api-routes.ts",
+    "test:e2e": "npx tsx test/e2e-simulation.ts",
+    "test:live": "npx tsx test/live-diagnostic.ts"
   },
   "dependencies": {
+    "jspdf": "^2.5.2",
+    "jszip": "^3.10.1",
+    "lucide-react": "^0.453.0",
     "next": "^14.2.15",
+    "openai": "^4.68.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "openai": "^4.68.0",
-    "lucide-react": "^0.453.0",
-    "zod": "^3.23.8",
-    "jszip": "^3.10.1",
-    "jspdf": "^2.5.2"
+    "zod": "^3.23.8"
   },
   "devDependencies": {
-    "typescript": "^5.6.3",
     "@types/node": "^20.16.11",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.0",
+    "autoprefixer": "^10.4.20",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.14",
-    "autoprefixer": "^10.4.20"
+    "tsx": "^4.23.15",
+    "typescript": "^5.6.3"
   }
 }

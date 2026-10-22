@@ -23,6 +23,9 @@ import {
   Film,
   RotateCcw,
   Check,
+  Wand2,
+  Server,
+  Zap,
 } from "lucide-react";
 import {
   ART_STYLES,
@@ -30,6 +33,12 @@ import {
   Beat,
   ImageProvider,
   LLMProvider,
+  AI_STUDIO_DEFAULT_KEY,
+  AI_STUDIO_DEFAULT_MODEL,
+  AI_STUDIO_DEFAULT_URL,
+  AI_STUDIO_IMAGE_MODELS,
+  OPENROUTER_DEFAULT_MODEL,
+  OPENROUTER_MODELS,
 } from "@/lib/providers";
 import {
   exportToPdf,
@@ -62,14 +71,23 @@ export default function StoryBeatApp() {
 
   // Provider Settings State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [llmProvider, setLlmProvider] = useState<LLMProvider>("openai");
-  const [llmModel, setLlmModel] = useState("");
+  const [llmProvider, setLlmProvider] = useState<LLMProvider>("openrouter");
+  const [llmModel, setLlmModel] = useState(OPENROUTER_DEFAULT_MODEL);
   const [llmApiKey, setLlmApiKey] = useState("");
   const [ollamaBaseUrl, setOllamaBaseUrl] = useState("http://localhost:11434");
 
-  const [imageProvider, setImageProvider] = useState<ImageProvider>("openai");
+  const [imageProvider, setImageProvider] = useState<ImageProvider>("aistudio");
   const [imageApiKey, setImageApiKey] = useState("");
-  const [imageModel, setImageModel] = useState("");
+  const [imageModel, setImageModel] = useState(AI_STUDIO_DEFAULT_MODEL);
+  const [aiStudioBaseUrl, setAiStudioBaseUrl] = useState(AI_STUDIO_DEFAULT_URL);
+  const [aiStudioApiKey, setAiStudioApiKey] = useState(AI_STUDIO_DEFAULT_KEY);
+
+  // Prompt Enhancement & Diagnostic State
+  const [enhancingBeatId, setEnhancingBeatId] = useState<string | null>(null);
+  const [connectionTestStatus, setConnectionTestStatus] = useState<
+    "idle" | "testing" | "success" | "error"
+  >("idle");
+  const [connectionTestMsg, setConnectionTestMsg] = useState<string | null>(null);
 
   // Load persisted settings and content on mount
   useEffect(() => {
@@ -77,14 +95,24 @@ export default function StoryBeatApp() {
       const savedSettings = localStorage.getItem(STORAGE_KEY_SETTINGS);
       if (savedSettings) {
         const parsed = JSON.parse(savedSettings);
-        if (parsed.llmProvider) setLlmProvider(parsed.llmProvider);
-        if (parsed.llmModel) setLlmModel(parsed.llmModel);
+        if (parsed.llmProvider) {
+          setLlmProvider(parsed.llmProvider);
+        } else {
+          setLlmProvider("openrouter");
+        }
+        if (parsed.llmModel && parsed.llmModel !== "anthropic/claude-3.5-sonnet") {
+          setLlmModel(parsed.llmModel);
+        } else {
+          setLlmModel(OPENROUTER_DEFAULT_MODEL);
+        }
         if (parsed.llmApiKey) setLlmApiKey(parsed.llmApiKey);
         if (parsed.ollamaBaseUrl) setOllamaBaseUrl(parsed.ollamaBaseUrl);
 
         if (parsed.imageProvider) setImageProvider(parsed.imageProvider);
         if (parsed.imageApiKey) setImageApiKey(parsed.imageApiKey);
         if (parsed.imageModel) setImageModel(parsed.imageModel);
+        if (parsed.aiStudioBaseUrl) setAiStudioBaseUrl(parsed.aiStudioBaseUrl);
+        if (parsed.aiStudioApiKey) setAiStudioApiKey(parsed.aiStudioApiKey);
 
         if (parsed.aspectRatio) setAspectRatio(parsed.aspectRatio);
         if (parsed.selectedArtStyleId) setSelectedArtStyleId(parsed.selectedArtStyleId);
@@ -122,6 +150,8 @@ export default function StoryBeatApp() {
         imageProvider,
         imageApiKey,
         imageModel,
+        aiStudioBaseUrl,
+        aiStudioApiKey,
         aspectRatio,
         selectedArtStyleId,
         customArtStyle,
@@ -139,6 +169,8 @@ export default function StoryBeatApp() {
     imageProvider,
     imageApiKey,
     imageModel,
+    aiStudioBaseUrl,
+    aiStudioApiKey,
     aspectRatio,
     selectedArtStyleId,
     customArtStyle,
@@ -246,10 +278,16 @@ export default function StoryBeatApp() {
         body: JSON.stringify({
           prompt: promptToUse,
           provider: imageProvider,
-          apiKey: imageApiKey || (imageProvider === llmProvider ? llmApiKey : undefined),
-          model: imageModel || undefined,
+          apiKey:
+            imageProvider === "aistudio"
+              ? (imageApiKey || aiStudioApiKey)
+              : (imageApiKey || (imageProvider === llmProvider ? llmApiKey : undefined)),
+          model:
+            imageModel || (imageProvider === "aistudio" ? AI_STUDIO_DEFAULT_MODEL : undefined),
+          baseUrl: imageProvider === "aistudio" ? aiStudioBaseUrl : undefined,
           aspectRatio,
           artStyleModifier: activeStyleModifier || undefined,
+          selectedArtStyleId,
         }),
       });
 
@@ -272,6 +310,66 @@ export default function StoryBeatApp() {
         prev.map((b) =>
           b.id === beatId ? { ...b, status: "error", error: err.message } : b
         )
+      );
+    }
+  };
+
+  const handleEnhancePrompt = async (beatId: string, currentPrompt: string) => {
+    if (!currentPrompt.trim()) return;
+    setEnhancingBeatId(beatId);
+    try {
+      const res = await fetch("/api/enhance-prompt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: currentPrompt,
+          baseUrl: aiStudioBaseUrl,
+          apiKey: aiStudioApiKey,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Enhancement failed");
+      if (data.enhancedPrompt) {
+        handleUpdateBeat(beatId, { imagePrompt: data.enhancedPrompt });
+      }
+    } catch (err: any) {
+      console.error("Enhance prompt error:", err);
+      alert(`Could not enhance prompt: ${err.message}`);
+    } finally {
+      setEnhancingBeatId(null);
+    }
+  };
+
+  const handleTestConnection = async () => {
+    setConnectionTestStatus("testing");
+    setConnectionTestMsg(null);
+    try {
+      const cleanUrl = aiStudioBaseUrl.replace(/\/+$/, "");
+      const healthUrl = cleanUrl.includes("workers.dev") ? cleanUrl : `${cleanUrl}/health`;
+
+      const res = await fetch(healthUrl, {
+        method: cleanUrl.includes("workers.dev") ? "POST" : "GET",
+        headers: cleanUrl.includes("workers.dev")
+          ? {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${aiStudioApiKey}`,
+            }
+          : {},
+        body: cleanUrl.includes("workers.dev")
+          ? JSON.stringify({ prompt: "ping", task: "text-to-image" })
+          : undefined,
+      });
+
+      if (!res.ok && res.status !== 400) {
+        throw new Error(`Server returned status ${res.status}`);
+      }
+
+      setConnectionTestStatus("success");
+      setConnectionTestMsg("Server online & ready! Fast local generation enabled.");
+    } catch (err: any) {
+      setConnectionTestStatus("error");
+      setConnectionTestMsg(
+        `Connection failed (${err.message}). If local server is stopped, automatic fallback to Cloudflare Worker will be used.`
       );
     }
   };
@@ -824,7 +922,28 @@ Marcus: Tall cybernetic engineer in his 40s, sharp angular jawline, silver optic
                           <label className="text-[10px] font-bold uppercase tracking-wider text-indigo-400">
                             Image Generation Prompt
                           </label>
-                          <span className="text-[10px] text-slate-500">Camera / Lighting / Scene</span>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleEnhancePrompt(beat.id, beat.imagePrompt)}
+                              disabled={enhancingBeatId === beat.id || !beat.imagePrompt.trim()}
+                              className="flex items-center gap-1 text-[10px] text-indigo-400 hover:text-indigo-300 font-medium disabled:opacity-40 transition py-0.5 px-2 rounded hover:bg-indigo-950/60 border border-transparent hover:border-indigo-800/40"
+                              title="Expand keywords into a rich storyboard prompt using AI Studio LLM"
+                            >
+                              {enhancingBeatId === beat.id ? (
+                                <>
+                                  <RefreshCw className="w-3 h-3 animate-spin text-indigo-400" />
+                                  <span className="text-slate-400">Enhancing...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Wand2 className="w-3 h-3 text-indigo-400" />
+                                  <span>✨ Enhance</span>
+                                </>
+                              )}
+                            </button>
+                            <span className="text-[10px] text-slate-500 hidden sm:inline">Camera / Lighting / Scene</span>
+                          </div>
                         </div>
                         <textarea
                           value={beat.imagePrompt}
@@ -887,12 +1006,18 @@ Marcus: Tall cybernetic engineer in his 40s, sharp angular jawline, silver optic
               </label>
               <select
                 value={llmProvider}
-                onChange={(e) => setLlmProvider(e.target.value as LLMProvider)}
+                onChange={(e) => {
+                  const newProv = e.target.value as LLMProvider;
+                  setLlmProvider(newProv);
+                  if (newProv === "openrouter" && !llmModel) {
+                    setLlmModel(OPENROUTER_DEFAULT_MODEL);
+                  }
+                }}
                 className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
               >
                 <option value="openai">OpenAI (GPT-4o)</option>
                 <option value="gemini">Google Gemini (Gemini 2.0 Flash)</option>
-                <option value="openrouter">OpenRouter (Claude 3.5 Sonnet / Llama 3.3)</option>
+                <option value="openrouter">OpenRouter (Llama 3.3 70B / Claude 5.5 / DeepSeek)</option>
                 <option value="ollama">Ollama (Local Llama 3 / Mistral)</option>
               </select>
 
@@ -914,13 +1039,65 @@ Marcus: Tall cybernetic engineer in his 40s, sharp angular jawline, silver optic
                 />
               )}
 
-              <input
-                type="text"
-                placeholder={`Custom Model Name (default for ${llmProvider})`}
-                value={llmModel}
-                onChange={(e) => setLlmModel(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-              />
+              {llmProvider === "openrouter" ? (
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    OpenRouter Model Selection
+                  </label>
+                  <div className="flex justify-between items-center">
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      OpenRouter Model Selection
+                    </label>
+                    <span className="text-[10px] text-emerald-400 font-semibold flex items-center gap-1">
+                      <Zap className="w-3 h-3" /> Auto Free Router
+                    </span>
+                  </div>
+                  <select
+                    value={
+                      OPENROUTER_MODELS.some((m) => m.id === (llmModel || OPENROUTER_DEFAULT_MODEL))
+                        ? (llmModel || OPENROUTER_DEFAULT_MODEL)
+                        : "custom"
+                    }
+                    onChange={(e) => {
+                      if (e.target.value === "custom") {
+                        setLlmModel("");
+                      } else {
+                        setLlmModel(e.target.value);
+                      }
+                    }}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  >
+                    {OPENROUTER_MODELS.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name} {m.badge ? `[${m.badge}]` : ""} — {m.description}
+                      </option>
+                    ))}
+                    <option value="custom">Custom OpenRouter Model ID...</option>
+                  </select>
+
+                  <p className="text-[10px] text-slate-400 leading-normal">
+                    ⚡ <strong>openrouter/free</strong> is OpenRouter&apos;s smart auto-router that distributes prompts across active zero-cost models with no token fees.
+                  </p>
+
+                  {(!OPENROUTER_MODELS.some((m) => m.id === llmModel) || llmModel === "") && (
+                    <input
+                      type="text"
+                      placeholder="Enter custom OpenRouter model slug (e.g. meta-llama/llama-3.3-70b-instruct)"
+                      value={llmModel}
+                      onChange={(e) => setLlmModel(e.target.value)}
+                      className="w-full mt-1.5 bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                  )}
+                </div>
+              ) : (
+                <input
+                  type="text"
+                  placeholder={`Custom Model Name (default for ${llmProvider})`}
+                  value={llmModel}
+                  onChange={(e) => setLlmModel(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+              )}
             </div>
 
             {/* Image Generation Provider */}
@@ -930,29 +1107,147 @@ Marcus: Tall cybernetic engineer in his 40s, sharp angular jawline, silver optic
               </label>
               <select
                 value={imageProvider}
-                onChange={(e) => setImageProvider(e.target.value as ImageProvider)}
+                onChange={(e) => {
+                  const newProv = e.target.value as ImageProvider;
+                  setImageProvider(newProv);
+                  if (newProv === "aistudio" && (!imageModel || imageModel.startsWith("dall-e") || imageModel.startsWith("imagen"))) {
+                    setImageModel(AI_STUDIO_DEFAULT_MODEL);
+                  }
+                }}
                 className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
               >
+                <option value="aistudio">🧪 AI Studio (FastAPI / Cloudflare Workers AI)</option>
                 <option value="openai">OpenAI (DALL-E 3)</option>
                 <option value="gemini">Google Imagen 3 (Gemini API)</option>
                 <option value="openrouter">OpenRouter Image API</option>
               </select>
 
-              <input
-                type="password"
-                placeholder="Image API Key (optional if using same provider as LLM)"
-                value={imageApiKey}
-                onChange={(e) => setImageApiKey(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-              />
+              {imageProvider === "aistudio" ? (
+                <>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      FastAPI Server / Worker URL
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. http://localhost:8000"
+                      value={aiStudioBaseUrl}
+                      onChange={(e) => setAiStudioBaseUrl(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono text-xs"
+                    />
+                    <div className="flex gap-2 text-[10px] text-slate-400">
+                      <button
+                        type="button"
+                        onClick={() => setAiStudioBaseUrl("http://localhost:8000")}
+                        className="underline hover:text-indigo-400"
+                      >
+                        Reset to Localhost (:8000)
+                      </button>
+                      <span>•</span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setAiStudioBaseUrl(
+                            "https://free-image-generation-api.potter-jason7839.workers.dev"
+                          )
+                        }
+                        className="underline hover:text-indigo-400"
+                      >
+                        Use Direct Cloudflare Worker
+                      </button>
+                    </div>
+                  </div>
 
-              <input
-                type="text"
-                placeholder="Image Model Name (e.g. dall-e-3, imagen-3.0-generate-002)"
-                value={imageModel}
-                onChange={(e) => setImageModel(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-              />
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      API Authorization Key
+                    </label>
+                    <input
+                      type="password"
+                      placeholder="API Key (default: 5b7f74f8ddb448f920eef0ae4263d81525d74)"
+                      value={aiStudioApiKey}
+                      onChange={(e) => setAiStudioApiKey(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <div className="flex justify-between items-center">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                        Generous & Quality Image Model
+                      </label>
+                      <span className="text-[10px] text-emerald-400 font-semibold flex items-center gap-1">
+                        <Zap className="w-3 h-3" /> Free Quota Safe
+                      </span>
+                    </div>
+                    <select
+                      value={imageModel || AI_STUDIO_DEFAULT_MODEL}
+                      onChange={(e) => setImageModel(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    >
+                      {AI_STUDIO_IMAGE_MODELS.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name} — {m.badge} ({m.cost})
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-[10px] text-slate-400 leading-normal">
+                      ⚡ High-cost models (FLUX.2 Dev & Klein 9B at ~2,000–3,000+ neurons) are excluded to ensure your free tier daily quota lasts.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleTestConnection}
+                      disabled={connectionTestStatus === "testing"}
+                      className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 rounded-lg border border-slate-700 flex items-center gap-1.5 transition"
+                    >
+                      {connectionTestStatus === "testing" ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-400" />
+                          <span>Testing Server Connection...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Server className="w-3.5 h-3.5 text-indigo-400" />
+                          <span>Test Local Server Connection</span>
+                        </>
+                      )}
+                    </button>
+                    {connectionTestStatus === "success" && (
+                      <div className="p-2 bg-emerald-950/60 border border-emerald-800/60 rounded-lg text-xs text-emerald-300 flex items-center gap-1.5">
+                        <Check className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                        <span>{connectionTestMsg}</span>
+                      </div>
+                    )}
+                    {connectionTestStatus === "error" && (
+                      <div className="p-2 bg-rose-950/60 border border-rose-800/60 rounded-lg text-xs text-rose-300 flex items-center gap-1.5">
+                        <AlertCircle className="w-4 h-4 text-rose-400 flex-shrink-0" />
+                        <span>{connectionTestMsg}</span>
+                      </div>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <input
+                    type="password"
+                    placeholder="Image API Key (optional if using same provider as LLM)"
+                    value={imageApiKey}
+                    onChange={(e) => setImageApiKey(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  />
+
+                  <input
+                    type="text"
+                    placeholder="Image Model Name (e.g. dall-e-3, imagen-3.0-generate-002)"
+                    value={imageModel}
+                    onChange={(e) => setImageModel(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  />
+                </>
+              )}
             </div>
 
             <p className="text-[11px] text-slate-400">
